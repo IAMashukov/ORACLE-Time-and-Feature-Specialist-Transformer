@@ -22,7 +22,7 @@ Oracle/
 ├── README.md            # Project documentation and run guidelines
 ├── src/
 │   ├── oracle_forecast_plot.png
-│   ├── test.py          # Standalone evaluation logic
+│   ├── test.py          # Testing functions
 │   ├── transformer.py   # ORACLE model definition, co-attention blocks, and encoders
 │   └── utils.py         # Data loaders, indexing, metrics, and logging utilities
 └── train.py             # Main entry point for training and evaluation
