@@ -188,6 +188,75 @@ def test_oracle_learning():
         # Display the plot
         plt.show()
 
+
+
+def test_patching():
+    print("Running Patching Tests...\n")
+    print("=" * 80)
+    batch_size = 2
+    channels = 7
+    patch_size = 16
+    stride = 16
+    
+    patcher = Patching(patch_size=patch_size, stride=stride, pad_end=True)
+
+    print("=== TEST 1: Perfectly Fitting Sequence ===")
+    lookback_perfect = 336 
+    x_perfect = torch.randn(batch_size, lookback_perfect, channels)
+    
+    expected_patches = compute_num_patches(lookback_perfect, patch_size, stride, pad_end=True)
+    out_perfect = patcher(x_perfect)
+    
+    assert out_perfect.shape[-1] == expected_patches, "Mismatch in Test 1!"
+    print("Test 1 Passed! \n")
+
+    print("=== TEST 2: Sequence Requiring Padding ===")
+    lookback_awkward = 100 
+    x_awkward = torch.randn(batch_size, lookback_awkward, channels)
+    
+    stride = 8
+    patcher = Patching(patch_size=patch_size, stride=stride, pad_end=True)
+    expected_patches_awkward = compute_num_patches(lookback_awkward, patch_size, stride=stride, pad_end=True)
+    out_awkward = patcher(x_awkward)
+    
+    assert out_awkward.shape[-1] == expected_patches_awkward, "Mismatch in Test 2!"
+    print("Test 2 Passed!\n")
+    print("All tests passed successfully!")
+    print("=" * 80)
+
+def test_oracle_coattention_block():
+    print("Running Modular ORACLE Co-Attention Block Tests...\n")
+    
+    B = 2             
+    C = 7             
+    lookback = 336    
+    patch_size = 16
+    stride = 16
+    d_model = 128
+    nheads = 8
+    dim_feedforward = 256
+    
+    N = compute_num_patches(lookback, patch_size, stride, pad_end=True)
+    
+    oracle_block = ModularOracleCoAttentionBlock(
+        d_model=d_model,
+        nheads=nheads,
+        dim_feedforward=dim_feedforward,
+        dropout=0.1
+    )
+
+    z_t_input = torch.randn(B * C, N, d_model)
+    z_f_input = torch.randn(B, C, d_model)
+
+    z_t_out, z_f_out = oracle_block(z_t=z_t_input, z_f=z_f_input, B=B, C=C, N=N)
+
+    assert z_t_out.shape == (B * C, N, d_model), "Temporal stream shape corrupted!"
+    assert z_f_out.shape == (B, C, d_model), "Feature stream shape corrupted!"
+    
+    print("All dimensions align! The Modular Co-Attention Block passed tests.")
+    print("=" * 80)
+
+
 if __name__ == "__main__":
     # 1. Verify the math and tensor routing
     trace_oracle_dimensions()
@@ -195,137 +264,157 @@ if __name__ == "__main__":
     # 2. Verify the gradients, learning capacity, and visualize results
     test_oracle_learning()
 
+    # 3. Test the patching mechanism
+    test_patching()
 
-# # ---------------------------------------------------------
-# # Test Blocks
-# # ---------------------------------------------------------
-# def test_patching():
-#     print("Running Patching Tests...\n")
-#     print("=" * 80)
-#     batch_size = 2
-#     channels = 7
-#     patch_size = 16
-#     stride = 16
-    
-#     patcher = Patching(patch_size=patch_size, stride=stride, pad_end=True)
+    # 4. Test the modular co-attention block
+    test_oracle_coattention_block()
 
-#     print("=== TEST 1: Perfectly Fitting Sequence ===")
-#     lookback_perfect = 336 
-#     x_perfect = torch.randn(batch_size, lookback_perfect, channels)
-    
-#     expected_patches = compute_num_patches(lookback_perfect, patch_size, stride, pad_end=True)
-#     out_perfect = patcher(x_perfect)
-    
-#     assert out_perfect.shape[-1] == expected_patches, "Mismatch in Test 1!"
-#     print("Test 1 Passed! \n")
 
-#     print("=== TEST 2: Sequence Requiring Padding ===")
-#     lookback_awkward = 100 
-#     x_awkward = torch.randn(batch_size, lookback_awkward, channels)
-    
-#     stride = 8
-#     patcher = Patching(patch_size=patch_size, stride=stride, pad_end=True)
-#     expected_patches_awkward = compute_num_patches(lookback_awkward, patch_size, stride=stride, pad_end=True)
-#     out_awkward = patcher(x_awkward)
-    
-#     assert out_awkward.shape[-1] == expected_patches_awkward, "Mismatch in Test 2!"
-#     print("Test 2 Passed!\n")
-#     print("All tests passed successfully!")
-#     print("=" * 80)
+'''
+==================================================
+ORACLE ARCHITECTURE & TENSOR TRACER
+==================================================
+/home/inal.mashukov001/.local/lib/python3.10/site-packages/torch/cuda/__init__.py:128: UserWarning: CUDA initialization: CUDA driver initialization failed, you might not have a CUDA gpu. (Triggered internally at ../c10/cuda/CUDAFunctions.cpp:108.)
+  return torch._C._cuda_getDeviceCount() > 0
+--- USING DEVICE: CPU ---
 
-# def test_oracle_coattention_block():
-#     print("Running Modular ORACLE Co-Attention Block Tests...\n")
-    
-#     B = 2             
-#     C = 7             
-#     lookback = 336    
-#     patch_size = 16
-#     stride = 16
-#     d_model = 128
-#     nheads = 8
-#     dim_feedforward = 256
-    
-#     N = compute_num_patches(lookback, patch_size, stride, pad_end=True)
-    
-#     oracle_block = ModularOracleCoAttentionBlock(
-#         d_model=d_model,
-#         nheads=nheads,
-#         dim_feedforward=dim_feedforward,
-#         dropout=0.1
-#     )
+--- FULL ARCHITECTURE ---
+ORACLE(
+  (temporal_embed): TemporalEmbedding(
+    (patcher): Patching()
+    (W_p): Linear(in_features=2, out_features=16, bias=True)
+    (dropout): Dropout(p=0.1, inplace=False)
+  )
+  (feature_embed): FeatureEmbedding(
+    (W_f): Linear(in_features=10, out_features=16, bias=True)
+    (dropout): Dropout(p=0.1, inplace=False)
+  )
+  (layers): ModuleList(
+    (0): ModularOracleCoAttentionBlock(
+      (time_specialist): TimeSpecialist(
+        (norm_t1): TemporalBatchNorm(
+          (bn): BatchNorm1d(16, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        )
+        (t_self_attn): SDPA_MultiheadAttention(
+          (q_proj): Linear(in_features=16, out_features=16, bias=True)
+          (k_proj): Linear(in_features=16, out_features=16, bias=True)
+          (v_proj): Linear(in_features=16, out_features=16, bias=True)
+          (out_proj): Linear(in_features=16, out_features=16, bias=True)
+        )
+        (norm_t2): TemporalBatchNorm(
+          (bn): BatchNorm1d(16, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        )
+        (t_cross_attn): SDPA_MultiheadAttention(
+          (q_proj): Linear(in_features=16, out_features=16, bias=True)
+          (k_proj): Linear(in_features=16, out_features=16, bias=True)
+          (v_proj): Linear(in_features=16, out_features=16, bias=True)
+          (out_proj): Linear(in_features=16, out_features=16, bias=True)
+        )
+        (norm_t3): TemporalBatchNorm(
+          (bn): BatchNorm1d(16, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        )
+        (ffn_t): Sequential(
+          (0): Linear(in_features=16, out_features=64, bias=True)
+          (1): GELU(approximate='none')
+          (2): Dropout(p=0.1, inplace=False)
+          (3): Linear(in_features=64, out_features=16, bias=True)
+        )
+        (dropout): Dropout(p=0.1, inplace=False)
+      )
+      (feature_specialist): FeatureSpecialist(
+        (norm_f1): TemporalBatchNorm(
+          (bn): BatchNorm1d(16, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        )
+        (f_self_attn): SDPA_MultiheadAttention(
+          (q_proj): Linear(in_features=16, out_features=16, bias=True)
+          (k_proj): Linear(in_features=16, out_features=16, bias=True)
+          (v_proj): Linear(in_features=16, out_features=16, bias=True)
+          (out_proj): Linear(in_features=16, out_features=16, bias=True)
+        )
+        (norm_f2): TemporalBatchNorm(
+          (bn): BatchNorm1d(16, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        )
+        (f_cross_attn): SDPA_MultiheadAttention(
+          (q_proj): Linear(in_features=16, out_features=16, bias=True)
+          (k_proj): Linear(in_features=16, out_features=16, bias=True)
+          (v_proj): Linear(in_features=16, out_features=16, bias=True)
+          (out_proj): Linear(in_features=16, out_features=16, bias=True)
+        )
+        (norm_f3): TemporalBatchNorm(
+          (bn): BatchNorm1d(16, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+        )
+        (ffn_f): Sequential(
+          (0): Linear(in_features=16, out_features=64, bias=True)
+          (1): GELU(approximate='none')
+          (2): Dropout(p=0.1, inplace=False)
+          (3): Linear(in_features=64, out_features=16, bias=True)
+        )
+        (dropout): Dropout(p=0.1, inplace=False)
+      )
+    )
+  )
+  (norm_t_final): TemporalBatchNorm(
+    (bn): BatchNorm1d(16, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (norm_f_final): TemporalBatchNorm(
+    (bn): BatchNorm1d(16, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+  )
+  (head): Linear(in_features=160, out_features=4, bias=True)
+)
+-------------------------
 
-#     z_t_input = torch.randn(B * C, N, d_model)
-#     z_f_input = torch.randn(B, C, d_model)
+--- FORWARD PASS TRACE ---
+1. Input 'x' shape: 
+   torch.Size([2, 10, 2]) -> (Batch, Lookback, Channels) on cpu
 
-#     z_t_out, z_f_out = oracle_block(z_t=z_t_input, z_f=z_f_input, B=B, C=C, N=N)
+2. Temporal Embedding output 'z_t' shape: 
+   torch.Size([4, 9, 16]) -> (B*C, Num_Patches, d_model) on cpu
+   Raw unfold 'patches' shape: 
+   torch.Size([2, 2, 2, 9]) -> (B, C, Num_Patches, Patch_Size)
 
-#     assert z_t_out.shape == (B * C, N, d_model), "Temporal stream shape corrupted!"
-#     assert z_f_out.shape == (B, C, d_model), "Feature stream shape corrupted!"
-    
-#     print("All dimensions align! The Modular Co-Attention Block passed tests.")
-#     print("=" * 80)
+3. Feature Embedding output 'z_f' shape: 
+   torch.Size([2, 2, 16]) -> (Batch, Channels, d_model)
 
-# def test_agnosticism():
-#     print("=" * 80)
-#     print("ORACLE CHANNEL AGNOSTICISM TEST")
-#     print("=" * 80)
-    
-#     batch_size = 16
-#     lookback = 336
-#     forecast_len = 96
-    
-#     d_model = 128
-#     nheads = 8
-#     num_layers = 2
-#     patch_size = 16
-#     stride = 16
-    
-#     print("Initializing ORACLE Model...")
-#     model = ORACLE(
-#         lookback=lookback, 
-#         patch_size=patch_size, 
-#         stride=stride, 
-#         d_model=d_model, 
-#         nheads=nheads, 
-#         num_layers=num_layers,
-#         forecast_len=forecast_len,
-#         num_classes=None
-#     )
-#     model.eval()
-#     print("Model initialized successfully.\n")
+4. Co-Attention Layer 0 outputs:
+   'z_t' shape: torch.Size([4, 9, 16])
+   'z_f' shape: torch.Size([2, 2, 16])
 
-#     channels_weather = 7
-#     channels_traffic = 862
-    
-#     x_weather = torch.randn(batch_size, lookback, channels_weather)
-#     x_traffic = torch.randn(batch_size, lookback, channels_traffic)
-    
-#     print(f"--- DATASET 1 (Weather) ---")
-#     print(f"Input Tensor Shape: {x_weather.shape} -> (Batch={batch_size}, Lookback={lookback}, Channels={channels_weather})")
-    
-#     try:
-#         with torch.no_grad():
-#             out_weather = model(x_weather)
-#         print(f"Success! Output Shape: {out_weather.shape} -> Expected: ({batch_size}, {channels_weather}, {forecast_len})\n")
-#     except Exception as e:
-#         print(f"Failed on Dataset 1: {e}\n")
+5. Post-Norm shapes remain identical.
 
-#     print(f"--- DATASET 2 (Traffic) ---")
-#     print(f"Input Tensor Shape: {x_traffic.shape} -> (Batch={batch_size}, Lookback={lookback}, Channels={channels_traffic})")
-    
-#     try:
-#         with torch.no_grad():
-#             out_traffic = model(x_traffic)
-#         print(f"Success! Output Shape: {out_traffic.shape} -> Expected: ({batch_size}, {channels_traffic}, {forecast_len})\n")
-#     except Exception as e:
-#         print(f"Failed on Dataset 2: {e}\n")
-        
-#     print("=" * 80)
-#     print("Conclusion: The exact same parameter instantiation natively ingested, modeled,")
-#     print("and routed predictions for vastly different feature spaces without throwing an error.")
-#     print("=" * 80)
+6. Flattened Temporal stream 'z_t_flat' shape: 
+   torch.Size([2, 2, 144]) -> (Batch, Channels, Num_Patches * d_model)
 
-# if __name__ == "__main__":
-#     test_patching()
-#     test_oracle_coattention_block()
-#     test_agnosticism()
+7. Joint Concatenation 'z_combined' shape: 
+   torch.Size([2, 2, 160]) -> (Batch, Channels, Joint_Dim)
+
+8. Final Output shape: 
+   torch.Size([2, 2, 4]) -> (Batch, Channels, Forecast_Len) on cpu
+==================================================
+
+ Starting Toy Training Loop (Sine/Cosine Forecasting)...
+--- TRAINING ON: CPU ---
+Epoch [100/500], MSE Loss: 0.021489
+Epoch [200/500], MSE Loss: 0.009844
+Epoch [300/500], MSE Loss: 0.004113
+Epoch [400/500], MSE Loss: 0.002741
+Epoch [500/500], MSE Loss: 0.001856
+
+Training complete. Generating and saving visualization...
+Plot saved successfully to: model_forecast_plot.png
+Running Patching Tests...
+
+================================================================================
+=== TEST 1: Perfectly Fitting Sequence ===
+Test 1 Passed! 
+
+=== TEST 2: Sequence Requiring Padding ===
+Test 2 Passed!
+
+All tests passed successfully!
+================================================================================
+Running Modular ORACLE Co-Attention Block Tests...
+
+All dimensions align! The Modular Co-Attention Block passed tests.
+================================================================================
+'''    
