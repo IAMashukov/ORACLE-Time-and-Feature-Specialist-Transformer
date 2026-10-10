@@ -67,19 +67,12 @@ class ForecastDataset(Dataset):
         raw_len = len(self.raw_data)
         self.train_raw_end = 8640 if "etth" in dataset_name else (34560 if "ettm" in dataset_name else int(raw_len * 0.7))
 
-        # Track the limit of the dataset we are allowed to use for normalization
-        self.current_stat_end = self.train_raw_end 
-        self.recompute_stats()
-
-    def recompute_stats(self):
-        """Computes exact statistics over all data seen up to the current test horizon."""
-        seen_data = self.raw_data[:self.current_stat_end]
-        self.mean = seen_data.mean(dim=0, keepdim=True)
-        self.std = seen_data.std(dim=0, keepdim=True) + 1e-6
-        self.update_normalized_windows()
-
-    def update_normalized_windows(self):
-        """Re-normalizes the entire data array space when global stats expand."""
+        # Statically compute normalization statistics based exclusively on the training split
+        train_data = self.raw_data[:self.train_raw_end]
+        self.mean = train_data.mean(dim=0, keepdim=True)
+        self.std = train_data.std(dim=0, keepdim=True) + 1e-6
+        
+        # Normalize the entire dataset once
         normalized_data = (self.raw_data - self.mean) / self.std
         self.x, self.y = [], []
         total_len = self.lookback + self.horizon 
@@ -87,21 +80,11 @@ class ForecastDataset(Dataset):
             self.x.append(normalized_data[i : i + self.lookback])
             self.y.append(normalized_data[i + self.lookback : i + total_len])
 
-    def update_global_stats(self, new_end_idx: int):
-        """Expands the exact normalization window to include the newly evaluated batch."""
-        if new_end_idx > self.current_stat_end:
-            self.current_stat_end = new_end_idx
-            self.recompute_stats()
-
     def get_raw_lookback(self, idx: int) -> torch.Tensor:
         return self.raw_data[idx : idx + self.lookback]
 
     def __len__(self): return len(self.x)
     def __getitem__(self, idx): return self.x[idx], self.y[idx]
-
-
-
-
 
 
 class RevIN(nn.Module):
@@ -133,11 +116,7 @@ class RevIN(nn.Module):
         return (x * self.stdev) + self.mean
     
 
-# ---------------------------------------------------------
-# Dynamic Architecture Bootstrapping Functions
-# ---------------------------------------------------------
 def build_model_and_optimizer(args, model_config, train_config, inferred_num_features, num_classes, forecast_len, is_pretrain_task, device):
-    """Initializes ORACLE architecture, RevIN layer, and optimizer."""
     model = ORACLE(
         lookback=model_config["lookback"],
         patch_size=model_config["patch_size"],
@@ -168,7 +147,6 @@ def build_model_and_optimizer(args, model_config, train_config, inferred_num_fea
 
 
 def run_training_loop(model, revin_layer, optimizer, train_loader, val_loader, args, train_config, device, is_pretrain_task, use_time, use_feature, criterion, results_dir, desc_prefix="Base"):
-    """Encapsulated Training + Early Stopping block strictly applied dynamically."""
     scaler = torch.amp.GradScaler('cuda')
     scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=train_config["learning_rate"], epochs=train_config["epochs"], steps_per_epoch=len(train_loader), pct_start=0.3)
     early_stopping = EarlyStopping(patience=train_config.get("early_stopping_patience", 5), verbose=True, path=os.path.join(results_dir, f"{desc_prefix}_checkpoint.pth"))
@@ -238,7 +216,6 @@ def run_training_loop(model, revin_layer, optimizer, train_loader, val_loader, a
         early_stopping(avg_val_loss, model, revin_layer)
         if early_stopping.early_stop: break
 
-    # Load optimal parameters before completing training step
     checkpoint = torch.load(os.path.join(results_dir, f"{desc_prefix}_checkpoint.pth"))
     model.load_state_dict(checkpoint['model_state_dict'])
     if revin_layer is not None and 'revin_state_dict' in checkpoint: 
@@ -257,7 +234,6 @@ def main():
     parser.add_argument("--disable_feature", action="store_true")
     parser.add_argument("--mask_ratio", type=float, default=0.40)
     parser.add_argument("--pretrained_ckpt", type=str, default=None)
-    parser.add_argument("--test_batch_size", type=int, default=32, help="Amount of test samples to infer before expanding dataset normalization and retraining.")
     args = parser.parse_args()
 
     use_time = not args.disable_time
@@ -273,7 +249,6 @@ def main():
 
     with open("./config.json", "r") as f: config = json.load(f)
     train_config, model_config = config["train"], config["model"]
-
     
     with open(os.path.join(results_dir, "config_used.json"), "w") as f:
         json.dump(config, f, indent=4)
@@ -287,9 +262,11 @@ def main():
         
         train_set = Subset(full_dataset, train_indices)
         val_set = Subset(full_dataset, val_indices)
+        test_set = Subset(full_dataset, test_indices)
         
         train_loader = DataLoader(train_set, batch_size=train_config["batch_size"], shuffle=True, pin_memory=True, drop_last=False)
         val_loader = DataLoader(val_set, batch_size=train_config["batch_size"], shuffle=False, pin_memory=True, drop_last=False)
+        test_loader = DataLoader(test_set, batch_size=train_config["batch_size"], shuffle=False, pin_memory=True, drop_last=False)
         
         num_classes, forecast_len = None, model_config["horizon"]
         criterion = nn.MSELoss()
@@ -298,7 +275,6 @@ def main():
 
     is_pretrain_task = (args.task == "pretraining")
 
-    # Construct the pure baseline for Offline Evaluation
     model, revin_layer, optimizer = build_model_and_optimizer(
         args, model_config, train_config, inferred_num_features, num_classes, forecast_len, is_pretrain_task, device
     )
@@ -306,10 +282,10 @@ def main():
     log_model_stats(model, device)
 
     # ---------------------------------------------------------
-    # Offline Base Training Stage
+    # Training Stage
     # ---------------------------------------------------------
     logging.info("=" * 80)
-    logging.info("Commencing Baseline Offline Training Space...")
+    logging.info("Commencing Training Phase...")
     logging.info("=" * 80)
     model, revin_layer = run_training_loop(
         model=model,
@@ -329,38 +305,23 @@ def main():
     )
 
     # ---------------------------------------------------------
-    # Online Test-Time Adaptation Phase (Batch-Streaming Evaluation)
+    # Standard Evaluation Phase
     # ---------------------------------------------------------
-    logging.info("Initiating Online Batch-based Test-Time Retraining Loop...")
+    logging.info("=" * 80)
+    logging.info("Initiating Standard Test Evaluation Phase...")
     logging.info("=" * 80)
 
-    if args.task not in ["forecasting"]:
-        raise ValueError("TTA tracking is optimized exclusively for streaming sequence models. Evaluating default baseline.")
+    model.eval()
+    if revin_layer is not None: revin_layer.eval()
 
     mae_loss = nn.L1Loss()
     total_mse, total_mae, sample_count = 0.0, 0.0, 0
-    test_batch_size = args.test_batch_size
 
-    # Sequential iteration: Extracting test samples in batch intervals
-    for i in range(0, len(test_indices), test_batch_size):
-        batch_indices = test_indices[i : i + test_batch_size]
-        logging.info(f"TTA Progress: Evaluating batch starting at index {batch_indices[0]} (Current Test Stats Coverage: Index {full_dataset.current_stat_end})")
+    with torch.no_grad():
+        for bx, by in test_loader:
+            bx = bx.to(device, non_blocking=True)
+            by = by.to(device, non_blocking=True)
 
-        # 1. Fetch current batch under CURRENT normalization framework
-        bx_list, by_list = [], []
-        for idx in batch_indices:
-            x, y = full_dataset[idx]
-            bx_list.append(x)
-            by_list.append(y)
-            
-        bx = torch.stack(bx_list).to(device)
-        by = torch.stack(by_list).to(device)
-        
-        model.eval()
-        if revin_layer is not None: revin_layer.eval()
-        
-        # 2. Generate Prediction under the current statistical mapping space
-        with torch.no_grad():
             with torch.amp.autocast('cuda'):
                 if is_pretrain_task:
                     bx_norm = revin_layer(bx, mode='norm') if revin_layer is not None else bx
@@ -377,61 +338,15 @@ def main():
                     current_loss = criterion(outputs, by).item()
                     current_mae = mae_loss(outputs, by).item()
 
-                    
                     total_mse += current_loss * bx.size(0)
                     total_mae += current_mae * bx.size(0)
 
-
-        sample_count += bx.size(0)
-
-        # 3. Log the evaluation metrics for the newly evaluated test batch
-        if is_pretrain_task:
-            logging.info(f"Test Batch Evaluated | MSE: {current_loss:.4f}")
-        else:
-            logging.info(f"Test Batch Evaluated | MSE: {current_loss:.4f} | MAE: {current_mae:.4f}")
-
-        # 4. Calculate exactly how far into the dataset this evaluated batch reaches
-        last_idx = batch_indices[-1]
-        new_end_idx = min(last_idx + full_dataset.lookback + full_dataset.horizon, len(full_dataset.raw_data))
-        
-        # 5. Integrate exact statistics spanning all evaluated data into global projection 
-        full_dataset.update_global_stats(new_end_idx)
-
-        # 6. Online Retraining from scratch: Fine-tune model weights on updated dataset landscape
-        logging.info("Re-initializing model parameters from scratch and retraining utilizing adapted normalization parameters...")
-        
-        model, revin_layer, optimizer = build_model_and_optimizer(
-            args, model_config, train_config, inferred_num_features, num_classes, forecast_len, is_pretrain_task, device
-        )
-        
-        # Re-instantiate loaders utilizing the globally expanded normalizations
-        adapted_train_set = Subset(full_dataset, train_indices)
-        adapted_val_set = Subset(full_dataset, val_indices) # Utilizing Validation to correctly inform Retraining Early-Stopping 
-        
-        adapted_train_loader = DataLoader(adapted_train_set, batch_size=train_config["batch_size"], shuffle=True, drop_last=False)
-        adapted_val_loader = DataLoader(adapted_val_set, batch_size=train_config["batch_size"], shuffle=False, drop_last=False)
-
-        model, revin_layer = run_training_loop(
-            model=model,
-            revin_layer=revin_layer,
-            optimizer=optimizer,
-            train_loader=adapted_train_loader,
-            val_loader=adapted_val_loader,
-            args=args,
-            train_config=train_config,
-            device=device,
-            is_pretrain_task=is_pretrain_task,
-            use_time=use_time,
-            use_feature=use_feature,
-            criterion=criterion,
-            results_dir=results_dir,
-            desc_prefix=f"TTA_Batch_{i // test_batch_size + 1}"
-        )
+            sample_count += bx.size(0)
 
     if is_pretrain_task:
-        logging.info(f"FINAL TTA PERFORMANCE | Evaluation Reconstruction Loss: {total_mse/sample_count:.4f}")
+        logging.info(f"FINAL TEST PERFORMANCE | Evaluation Reconstruction Loss: {total_mse/sample_count:.4f}")
     else:
-        logging.info(f"FINAL TTA PERFORMANCE | MSE: {total_mse/sample_count:.4f} | MAE: {total_mae/sample_count:.4f}")
+        logging.info(f"FINAL TEST PERFORMANCE | MSE: {total_mse/sample_count:.4f} | MAE: {total_mae/sample_count:.4f}")
 
 if __name__ == "__main__":
     main()
