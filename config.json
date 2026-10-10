@@ -1,0 +1,23 @@
+{
+    "train": {
+        "batch_size": 32,
+        "epochs": 20,
+        "learning_rate": 0.0001,
+        "weight_decay": 1e-05,
+        "lr_factor": 0.5,
+        "lr_patience": 5,
+        "early_stopping_patience": 10
+    },
+    "model": {
+        "lookback": 36,
+        "horizon": 60,
+        "patch_size": 16,
+        "stride": 8,
+        "d_model": 128,
+        "nheads": 4,
+        "num_layers": 2,
+        "dim_feedforward": 128,
+        "dropout": 0.1,
+        "activation": "gelu"
+    }
+}
