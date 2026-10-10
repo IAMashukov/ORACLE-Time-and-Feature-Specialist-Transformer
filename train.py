@@ -305,7 +305,7 @@ def main():
     )
 
     # ---------------------------------------------------------
-    # Standard Evaluation Phase
+    # Testing Phase
     # ---------------------------------------------------------
     logging.info("=" * 80)
     logging.info("Initiating Standard Test Evaluation Phase...")
