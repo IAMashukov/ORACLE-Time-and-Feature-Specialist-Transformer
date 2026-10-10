@@ -301,7 +301,7 @@ def main():
         use_feature=use_feature,
         criterion=criterion,
         results_dir=results_dir,
-        desc_prefix="Base"
+        desc_prefix="Train"
     )
 
     # ---------------------------------------------------------
