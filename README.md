@@ -1,6 +1,8 @@
 
 # ORACLE: Time and Feature Specialist Transformer
 
+Written by Inal Mashukov.
+
 ![Oracle Architecture](architecture.png)
 
 This repository contains the PyTorch implementation of **ORACLE: Time and Feature Specialist Transformer for Time Series Forecasting**.
@@ -98,7 +100,3 @@ python3 train.py --task forecasting --data data/ETTh1.csv --run_name ORACLE_ETTh
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](https://www.google.com/search?q=LICENSE) file for details.
-
-```
-
-```
