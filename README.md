@@ -1,7 +1,7 @@
 
 # ORACLE: Time and Feature Specialist Transformer
 
-Written by Inal Mashukov.
+### Written by Inal Mashukov.
 
 ![Oracle Architecture](architecture.png)
 
