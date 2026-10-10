@@ -1,5 +1,7 @@
 # ORACLE: Time and Feature Specialist Transformer
 
+[!Oracle Architecture](oracle.png)
+
 This repository contains the PyTorch implementation of **ORACLE: Time and Feature Specialist Transformer with Test-Time Adaptation for Time Series Forecasting**.
 
 ORACLE is a dual-stream Transformer architecture designed for highly accurate multivariate time series forecasting. It leverages Time and Feature Specialist Encoders alongside Test-Time Adaptation to dynamically capture both temporal dependencies and cross-channel feature relationships.
