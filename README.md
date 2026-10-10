@@ -1,6 +1,6 @@
 # ORACLE: Time and Feature Specialist Transformer
 
-[!Oracle Architecture](oracle.png)
+[!Oracle Architecture](architecture.pdf)
 
 This repository contains the PyTorch implementation of **ORACLE: Time and Feature Specialist Transformer with Test-Time Adaptation for Time Series Forecasting**.
 
